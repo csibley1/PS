@@ -1,0 +1,98 @@
+﻿ipmo activedirectory
+$creds = get-credential
+<#
+Get EntryIDFolder and EntryIDStore with the two lines below
+$folder = $namespace.getDefaultFolder($olFolders::olFolderInBox)
+$folderFromID = $namespace.GetFolderFromID($folder.EntryID, $folder.StoreID)
+#>
+Add-Type -Assembly "Microsoft.Office.Interop.Outlook"
+$Outlook = New-Object -ComObject Outlook.Application
+$EntryIDFolder = '[redacted]'
+$EntryIDStore = '[redacted]'
+$namespace = $Outlook.GetNameSpace("MAPI")
+$uafolder = $namespace.GetFolderFromID($EntryIDFolder, $EntryIDStore)
+$newHire = (($uafolder.Items | select senton,body | sort -property senton -descending | select -first 1 -ExpandProperty Body) -split "`n")
+
+$newFN = ((($newHire | select-string -Pattern 'First:') -split ":",2)[1]).replace("`r","")
+$newLN = ((($newHire | select-string -Pattern 'Last:') -split ":",2)[1]).replace("`r","")
+$newBranch = ((($newHire | select-string -Pattern 'Branch:') -split ": ",2)[1]).replace("`r","")
+$newDept = ((($newHire | select-string -Pattern 'Department:') -split ":",2)[1]).replace("`r","")
+$newTitle = ((($newHire | select-string -Pattern 'Position:') -split ": ",2)[1]).replace("`r","")
+$getMgr = ((($newHire | select-string -Pattern 'Supervisor/Manager:') -split ":",2)[1]).replace("`r","")
+$newMgr = get-aduser -filter {((displayname -eq $getMgr) -or (samaccountname -eq $getMgr)) -and (samaccountname -notlike '*0')} -properties *
+$srcusr = ((($newHire | select-string -Pattern 'account can be copied') -split " ",11)[10]).replace("`r","")
+$newDN = $newFN+" "+$newLN
+$usrprops = get-aduser -filter {((displayname -eq $srcusr) -or (samaccountname -eq $srcusr)) -and (samaccountname -notlike '*0')} -properties *
+$newOU = ($usrprops.DistinguishedName -split ",",2)[1]
+
+#Generate a username that is 10 characters or less
+try {
+    #Check for extended names like 'Firstname Von Lastname'
+    $newuname = (($newDN.substring(0,1)+(($newDN -split " ",3)[1]).substring(0,1))+($newDN -split " ",3)[2].substring(0, [System.Math]::Min(8, (($newDN -split " ",3)[2]).length))).replace("'","")
+    }
+    catch {
+        #Going with 'Firstname Lastname'
+        $newuname = (($newDN.substring(0,1)+(($newDN -split " ",2)[1]).substring(0, [System.Math]::Min(9, (($newDN -split " ",2)[1]).length)))).replace("'","")
+        }
+finally {
+    #Complete setup
+    $bldg = $usrprops.Office
+    $bu = $usrprops.Company
+    $upn = $newuname+'@CONTOSO.com'
+    $country = $usrprops.Country
+    $ext1 = $usrprops.extensionAttribute1
+    $street = $usrprops.StreetAddress
+    $city = $usrprops.city
+    $state = $usrprops.State
+    $zip = $usrprops.PostalCode
+    $homedir = '\\FILESRV\userhome$\'+$newuname
+    # Standard procedure is to change the password immediately after logging in for first-time setup
+    $pw = ConvertTo-SecureString -String "r3@lLy$EcuRe!!!1!1!11!!1" -AsPlainText -Force
+    $checkuser = get-aduser -filter "samaccountname -eq '$newuname'"
+
+    #Create user if the username is not found
+    if ($checkuser -ne $null){
+    write-host $newuname' exists'
+    }else{
+        New-ADUser -credential $creds `
+            -Name $newDN `
+            -GivenName $newFN `
+            -Surname $newLN `
+            -DisplayName $newDN `
+            -Samaccountname $newuname `
+            -Userprincipalname $upn `
+            -Description "$newTitle" `
+            -Title "$newTitle" `
+            -Company $bu `
+            -Department $newdept `
+            -Manager $newMgr `
+            -Office $bldg `
+            -StreetAddress $street `
+            -City $city `
+            -State $state `
+            -country $country `
+            -PostalCode $zip `
+            -Path $newOU `
+            -HomeDirectory $homedir `
+            -HomeDrive 'H:' `
+            -ScriptPath 'logon.vbs' `
+            -AccountPassword($pw) `
+            -Enabled $false
+    
+    #Add extensionattributes for dynamic DLs
+    Set-ADUser -Credential $creds -identity $newuname -add @{extensionattribute1 = "$ext1"}
+    Set-ADUser -Credential $creds -identity $newuname -add @{extensionattribute2 = "$bldg"}
+
+    #Copy groups
+    $groups = Get-ADPrincipalGroupMembership -identity $usrprops.SamAccountName
+    foreach ($group in $groups){
+        write-host 'Adding'$newDN 'to'$group.name
+        Add-ADGroupMember -credential $creds -identity $group -Members $newuname
+        }
+    
+    #If Contractor, add ext3
+    if ($newOU -eq ("OU=Contractor,DC=CONTOSO,DC=com" -or "OU=APAC,OU=Contractor,DC=CONTOSO,DC=com")){
+        Set-ADUser -Credential $creds -identity $newuname -add @{extensionattribute3 = "Contractor"}
+        }
+    }
+}

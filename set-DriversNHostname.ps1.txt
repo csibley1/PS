@@ -1,0 +1,107 @@
+﻿# Set admin password to Never Expire
+"Setting admin password..."
+$locadm = -1234567890
+$newname = (get-ciminstance -class:win32_bios).serialnumber
+$secPass = ConvertTo-SecureString ($newname).insert(3,$locadm) -AsPlainText -Force
+Set-LocalUser -Name "Account01" -password $secPass -PasswordNeverExpires:$true
+# Add registry key to disable Fast Boot
+"Disabling Fast Boot..."
+reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f
+# Get computer model
+$fullmodel = (Get-ciminstance -Class:Win32_ComputerSystem).Model
+write-host "Computer model appears to be: " $fullmodel
+
+# Install drivers. Alienware & Inspiron models do not have driver CAB packages
+switch (((Get-ciminstance -Class:Win32_ComputerSystem).Model -split " ",2)[0])
+{
+    Alienware
+    {
+    $modelPath = "E:\drivers\10\Alienware\"+($fullmodel -split " ",3)[1]
+    # Create local folder for drivers
+    mkdir C:\Dell\Drivers
+    # Copy drivers, then install
+    write-host "-----   Copying drivers...   -----"
+    $drivers = (gci $modelpath).FullName
+    $drivers | copy-item -destination "C:\Dell\Drivers"
+    gci C:\Dell\Drivers | foreach-object{(get-date | select datetime);write-host "Installing " $_.fullname;start-process $_.fullname -ArgumentList '/s'; sleep 60}
+    sleep 10
+    write-host "Renaming computer..."
+    Rename-Computer -newname $newname -localcredential Account01 -passthru
+    shutdown -r -t 5
+    }
+
+    Inspiron
+    {
+    <#$insp = "E:\drivers\10\Inspiron\"+($fullmodel -split " ")[1]
+    pnputil.exe /add-driver $insp\inf\*.inf /subdirs /install
+    'Installing Intel Management Engine...'
+    start-process $insp\IME\SetupME.exe -ArgumentList '-s'
+    sleep 20
+    'Installing Realtek audio...'
+    start-process $insp\Realtek_Audio\Setup.exe -ArgumentList '-s'
+    sleep 35
+    'Installing Intel UHD Graphics...'
+    start-process $insp\Intel_HD_Graphics\igxpin.exe -ArgumentList '-s'
+    sleep 40
+    'Installing Rapid Storage Technology...'
+    start-process $insp\RST\SetupRST.exe -ArgumentList '/s /accepteula'
+    sleep 25
+    'Installing Processor Power Manager...'
+    start-process provtool -ArgumentList '$insp\Processor_power\PPM-TGL-preview-v8.32-20H1.ppkg /quiet'
+    sleep 25
+    'Installing Integrated Sensor...'
+    start-process $insp\Integrated_Solution\SetupISS.exe -ArgumentList '-s'
+    sleep 25
+    'Installing BIOS update...'
+    start-process $insp\BIOS.1.2.exe -ArgumentList '-s'
+    sleep 25#>
+    $mdl1 = ($fullmodel -split " ",2)[0]
+    $mdl2 = ($fullmodel -split " ",2)[1]
+    $extra = (gci E:\drivers\10\$mdl1\$mdl2 -filter *.exe).fullname
+    write-host "Installing Inspiron drivers..."
+    foreach ($driver in $extra){start-process $driver -ArgumentList '/s';write-host "Installing " $driver;sleep 40}
+    $iUHD = ""
+    $setp = ""
+    sleep 180
+    do
+    {
+        write-host "Waiting for drivers to finish..."
+        $iUHD = (get-process igxpin -ErrorAction SilentlyContinue) -eq $null
+        $setp = (get-process setup -ErrorAction SilentlyContinue) -eq $null
+        sleep 5
+    }until($iUHD -eq $true -and $setp -eq $true)
+    write-host "Renaming computer..."
+    Rename-Computer -newname $newname -localcredential Account01 -passthru
+    shutdown -r -t 5
+    }
+
+    default
+    {
+        $mdl1 = ($fullmodel -split " ",2)[0]
+        $mdl2 = ($fullmodel -split " ",2)[1]
+        $cab = (gci E:\drivers\10\$mdl1\$mdl2 -filter *.cab).fullname
+        $extra = (gci E:\drivers\10\$mdl1\$mdl2 -filter *.exe).fullname
+        $xtra = (gci E:\drivers\10\$mdl1\$mdl2 -filter *.exe).name
+        if ($cab -ne $null)
+        {
+            write-host "Installing drivers from " $cab
+            mkdir C:\Dell\cabdriver
+            expand -F:* $cab C:\Dell\cabdriver
+            pnputil.exe /add-driver C:\Dell\cabdriver\*.inf /subdirs /install
+        }
+        else
+            {write-host "**** NO CAB FOUND ****"}
+        
+
+        write-host "Installing other drivers..."
+        foreach ($driver in $extra){start-process $driver -ArgumentList '/s';write-host "Installing " $driver;sleep 15}
+        sleep 60
+        
+    write-host "Renaming computer..."
+    try
+    {
+        Rename-Computer -newname $newname -localcredential Account01 -passthru
+        shutdown -r -t 5
+    }catch{write-host "Nevermind!"}
+    }
+}
