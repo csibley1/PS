@@ -1,0 +1,62 @@
+﻿# Set admin password to Never Expire
+"Setting admin password..."
+$locadm = -CHANGEME
+$newname = (get-ciminstance -classname win32_bios).serialnumber
+$secPass = ConvertTo-SecureString ($newname).insert(3,$locadm) -AsPlainText -Force
+Set-LocalUser -Name "Account01" -password $secPass -PasswordNeverExpires:$true
+# Add registry key to disable Fast Boot
+"Disabling Fast Boot..."
+reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f
+# Get computer model
+$fullmodel = (Get-ciminstance -Classname Win32_ComputerSystem).Model
+write-host "Computer model appears to be: " $fullmodel
+
+# Install drivers. Alienware models do not have driver CAB packages
+switch (($fullmodel -split " ",2)[0])
+{
+    Alienware
+    {
+    $modelPath = "E:\drivers\10\Alienware\"+($fullmodel -split " ",3)[1]
+    # Create local folder for drivers
+    mkdir C:\Dell\Drivers
+    # Copy drivers, then install
+    write-host "-----   Copying drivers...   -----"
+    $drivers = (gci $modelpath).FullName
+    $drivers | copy-item -destination "C:\Dell\Drivers"
+    gci C:\Dell\Drivers | foreach-object{(get-date | select datetime);write-host "Installing " $_.fullname;start-process $_.fullname -ArgumentList '/s'; sleep 60}
+    sleep 10
+    write-host "Renaming computer..."
+    Rename-Computer -newname $newname -localcredential Account01 -passthru
+    shutdown -r -t 5
+    }
+
+
+    default
+    {
+        $mdl1 = ($fullmodel -split " ",2)[0]
+        $mdl2 = ($fullmodel -split " ",2)[1]
+        $cab = (gci E:\drivers\10\$mdl1\$mdl2 -filter *.cab).fullname
+        $extra = (gci E:\drivers\10\$mdl1\$mdl2 -filter *.exe).fullname
+        if ($cab -ne $null)
+        {
+            write-host "Installing drivers from " $cab
+            mkdir C:\Dell\cabdriver
+            expand -F:* $cab C:\Dell\cabdriver
+            pnputil.exe /add-driver C:\Dell\cabdriver\*.inf /subdirs /install
+        }
+        else
+            {write-host "**** NO CAB FOUND ****"}
+        
+
+        write-host "Installing other drivers..."
+        foreach ($driver in $extra){start-process $driver -ArgumentList '/s';write-host "Installing " $driver;sleep 15}
+        sleep 60
+        
+    write-host "Renaming computer..."
+    try
+    {
+        Rename-Computer -newname $newname -localcredential Account01 -passthru
+        shutdown -r -t 5
+    }catch{write-host "Nevermind!"}
+    }
+}
