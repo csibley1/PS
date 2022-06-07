@@ -1,5 +1,4 @@
 # PS
-Powershell scripts
 
 Some early powershell scripts I wrote to make life a little easier at work. Descriptions below:
 
