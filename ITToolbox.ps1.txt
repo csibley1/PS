@@ -267,9 +267,9 @@ do
             }
             foreach ($retpc in $retired)
             {
-                if ($retpc.'Computer Name' -like $_ -or $retpc.'User Name' -like $_)
+                if ($retpc.'Computer Name' -like $_.name)
                 {
-                    "***RETIRED*** "+$retpc.'Computer Name'+'`t'+$retpc.'Date'+'`t'+$retpc.'User Name'
+                    $retpc.'Computer Name'+"`t`t"+$_.operatingsystemversion+"`t`t"+$retpc.'Date'+"`t`t"+$retpc.'User Name'+"`t`t"+"***RETIRED***"
                 }
             }
             }
